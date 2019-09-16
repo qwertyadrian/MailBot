@@ -11,8 +11,7 @@ import zipfile
 import telebot
 import binascii
 
-regex = r'=\?UTF-8\?B\?'
-regex1 = r'=\?KOI8-R\?B\?'
+regexes = [r'=\?UTF-8\?B\?', r'=\?KOI8-R\?B\?']
 
 
 def payload_parser(payload, uid, archive):
@@ -23,7 +22,7 @@ def payload_parser(payload, uid, archive):
         filename = str(uid) + '.html'
         payload_writer(payload, filename, archive)
     elif filename:
-        result = decode_text(r"=\?koi8-r\?B\?(.*)\?=", filename, regex1)
+        result = decode_text(r"=\?koi8-r\?B\?(.*)\?=", filename, regexes[1])
         if result:
             filename = base64.decodebytes(bytes(result, 'koi8-r')).decode('koi8-r')
         payload_writer(payload, filename, archive)
@@ -32,14 +31,20 @@ def payload_parser(payload, uid, archive):
         payload_writer(payload, filename, archive)
 
 
-def decode_text(reg, text, global_reg=regex):
+def decode_text(reg, text, global_reg=regexes[0]):
     matches = re.finditer(reg, text, re.IGNORECASE | re.MULTILINE)
     for matchNum, match in enumerate(matches):
-        return regexer(global_reg, match.group())
+        return re.sub(global_reg, '', match.group(), flags=re.MULTILINE | re.IGNORECASE).replace('?=', '')
 
 
-def regexer(reg, text):
-    return re.sub(reg, '', text, flags=re.MULTILINE | re.IGNORECASE).replace('?=', '')
+def regexer(regs, text):
+    if type(regs) is list:
+        if 'utf-8' in text.lower():
+            status = 'utf-8'
+            yield re.sub(regs[0], '', text, flags=re.MULTILINE | re.IGNORECASE).replace('?=', ''), status
+        elif 'koi8-r' in text.lower():
+            status = 'koi8-r'
+            yield re.sub(regs[1], '', text, flags=re.MULTILINE | re.IGNORECASE).replace('?=', ''), status
 
 
 def payload_writer(payload, filename, archive):
@@ -65,29 +70,38 @@ def get_emails(host, username, pass_, msg_type='UNSEEN'):
             email_message = email.message_from_bytes(message_data[b'RFC822'])
 
             subject = email_message.get('Subject')
-            subject = regexer(regex, subject)
-            subject = regexer(regex1, subject)
-            try:
-                subject = base64.decodebytes(bytes(subject, 'utf-8')).decode()
-            except (binascii.Error, UnicodeDecodeError):
-                subject = base64.decodebytes(bytes(subject, 'koi8-r')).decode('koi8-r')
+            subjects = regexer(regexes, subject)
+            for i in subjects:
+                if 'utf-8' in i:
+                    try:
+                        subject = base64.decodebytes(bytes(i[0], 'utf-8')).decode()
+                    except (binascii.Error, UnicodeDecodeError):
+                        pass
+                    break
+                elif 'koi8-r' in i:
+                    subject = base64.decodebytes(bytes(i[0], 'koi8-r')).decode('koi8-r')
+                    break
 
             from_ = email_message.get('From')
 
-            result = decode_text(r"=\?utf-8\?B\?(.*)\?=", from_)
-            if result:
-                from_ = result
+            try:
+                result = decode_text(r"=\?utf-8\?B\?(.*)\?=", from_)
+                if result:
+                    from_ = result
 
-            result = decode_text(r"=\?koi8-r\?B\?(.*)\?=", from_)
-            if result:
-                from_ = result
+                result = decode_text(r"=\?koi8-r\?B\?(.*)\?=", from_)
+                if result:
+                    from_ = result
+            except TypeError:
+                pass
 
             try:
                 subject = subject + ' от ' + base64.decodebytes(bytes(from_, 'utf-8')).decode()
-            except binascii.Error:
+            except (binascii.Error, UnicodeDecodeError):
                 subject = subject + ' от ' + from_
             except TypeError:
                 pass
+            subject = subject.replace('/', '')
 
             archive = zipfile.ZipFile(file=subject + '.zip', mode='w', compression=zipfile.ZIP_DEFLATED)
 
