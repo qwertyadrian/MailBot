@@ -1,0 +1,2 @@
+pyTelegramBotAPI==3.6.6
+imapclient==2.1.0
