@@ -23,16 +23,9 @@ def payload_parser(payload, uid, archive):
         filename = str(uid) + '.html'
         payload_writer(payload, filename, archive)
     elif filename:
-        # result = re.sub(regex1, '', filename, flags=re.MULTILINE | re.IGNORECASE).replace('?=', '')
         result = decode_text(r"=\?koi8-r\?B\?(.*)\?=", filename, regex1)
-        # try:
-        #     result = base64.decodebytes(bytes(result, 'koi8-r')).decode('koi8-r')
-        # except (binascii.Error, TypeError):
-        #     pass
         if result:
             filename = base64.decodebytes(bytes(result, 'koi8-r')).decode('koi8-r')
-        # except binascii.Error:
-        #     filename = result
         payload_writer(payload, filename, archive)
     elif mimetype == 'text/plain':
         filename = str(uid) + '.txt'
@@ -88,7 +81,6 @@ def get_emails(host, username, pass_, msg_type='UNSEEN'):
             result = decode_text(r"=\?koi8-r\?B\?(.*)\?=", from_)
             if result:
                 from_ = result
-            # print(subject, from_)
 
             try:
                 subject = subject + ' от ' + base64.decodebytes(bytes(from_, 'utf-8')).decode()
