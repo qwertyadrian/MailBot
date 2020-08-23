@@ -22,6 +22,7 @@ def get_emails(
     msg_type: str = "UNSEEN",
     last_uid: int = 0,
     read_only: bool = False,
+    folder: str = "INBOX",
 ) -> Tuple[mailparser.MailParser, int]:
     """Получение писем
 
@@ -31,13 +32,14 @@ def get_emails(
     :param msg_type: Критерий для поиска писем (по умолчанию возвращаются только непрочитанные письма)
     :param last_uid: ID последнего прочитанного письма
     :param read_only: Не помечать письма прочитанными?
+    :param folder: Имя папки, в которой будет производиться поиск писем
 
     :rtype: Tuple[mailparser.MailParser, int]
     :returns: Возвращает объект письма и его ID
     """
     with IMAPClient(host) as server:
         server.login(login, password)
-        server.select_folder("INBOX", readonly=read_only)
+        server.select_folder(folder, readonly=read_only)
 
         mails = server.search(msg_type)
         for uid, message_data in server.fetch(mails, "RFC822").items():
@@ -116,6 +118,7 @@ if __name__ == "__main__":
     last_id = config.getint("email", "last_uid", fallback=0)
     read_only = config.getboolean("email", "read_only", fallback=False)
     mail_type = config.get("email", "criteria", fallback="UNSEEN")
+    mail_folder = config.get("email", "folder", fallback="INBOX")
     bot_token = config.get("telegram", "token")
     chat = config.get("telegram", "chat_id")
     bot_ = TeleBot(bot_token)
