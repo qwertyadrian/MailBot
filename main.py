@@ -14,10 +14,10 @@ message_breakers = ["\n", ", "]
 def get_emails(
     host: str, username: str, password: str, msg_type: str = "UNSEEN", last_uid: int = 0, read_only: bool = False
 ) -> int:
-    """Разделение текста на части
+    """Получение писем
 
     :param host: Адрес IMAP сервера
-    :param username: Имя пользователя (почтвый ящик)
+    :param username: Имя пользователя (почтовый ящик)
     :param password: Пароль
     :param msg_type: Критерий для поиска писем (по умолчанию возвращаются только непрочитанные письма)
     :param last_uid: ID последнего прочитанного письма
@@ -71,7 +71,7 @@ def get_emails(
 
 def send_emails_telegram(bot: TeleBot, chat_id: str):
     os.chdir("INBOX")  # Переход в папку с сохраненными письмами
-    for mail in os.listdir("."):  # Получаем список папок, в которых лежит само письмо и его влложения
+    for mail in os.listdir("."):  # Получаем список папок, в которых лежит само письмо и его вложения
         os.chdir(mail)  # Переходим в папку с письмом
 
         if os.path.exists("text_plain.txt"):  # Если существует текстовая версия письма
@@ -82,7 +82,7 @@ def send_emails_telegram(bot: TeleBot, chat_id: str):
                 bot.send_document(chat_id, open("text_plain.txt", "rb"), caption="Продолжение письма")
             os.remove("text_plain.txt")  # Удаляем отправленный файл
 
-        if os.path.exists("text_html.html"):  # Если существует веб версия версия письма, то отправляем ее файлом
+        if os.path.exists("text_html.html"):  # Если существует веб версия письма, то отправляем ее файлом
             bot.send_document(chat_id, open("text_html.html", "rb"), caption="{} (веб версия письма)".format(mail))
             os.remove("text_html.html")  # Удаляем отправленный файл
 
@@ -94,13 +94,14 @@ def send_emails_telegram(bot: TeleBot, chat_id: str):
 
         os.chdir("../")  # Выходим из папки с письмом
         os.rmdir(mail)  # И удаляем ее, так как она пуста
-    os.chdir("../")  # Выходим из папки с сохраннеными письмами
+    os.chdir("../")  # Выходим из папки с сохраненными письмами
 
 
 def split(text: str, max_message_length: int = 4091) -> list:
     """ Разделение текста на части
-    :param text: Рабиваемый текст
-    :param max_message_length: Максимальная длина рабитой части текста
+
+    :param text: Разбиваемый текст
+    :param max_message_length: Максимальная длина разбитой части текста
     """
     if len(text) >= max_message_length:
         last_index = max(map(lambda separator: text.rfind(separator, 0, max_message_length), message_breakers))
