@@ -2,7 +2,11 @@
 # -*- coding: utf-8 -*-
 
 import configparser
+import io
 import os
+import tempfile
+import time
+from typing import Tuple
 
 import mailparser
 from imapclient import IMAPClient
@@ -12,89 +16,74 @@ message_breakers = ["\n", ", "]
 
 
 def get_emails(
-    host: str, username: str, password: str, msg_type: str = "UNSEEN", last_uid: int = 0, read_only: bool = False
-) -> int:
+    host: str,
+    login: str,
+    password: str,
+    msg_type: str = "UNSEEN",
+    last_uid: int = 0,
+    read_only: bool = False,
+) -> Tuple[mailparser.MailParser, int]:
     """Получение писем
 
     :param host: Адрес IMAP сервера
-    :param username: Имя пользователя (почтовый ящик)
+    :param login: Имя пользователя (почтовый ящик)
     :param password: Пароль
     :param msg_type: Критерий для поиска писем (по умолчанию возвращаются только непрочитанные письма)
     :param last_uid: ID последнего прочитанного письма
     :param read_only: Не помечать письма прочитанными?
 
-    :rtype: int
-    :returns: Возвращает ID последнего прочитанного письма
+    :rtype: Tuple[mailparser.MailParser, int]
+    :returns: Возвращает объект письма и его ID
     """
-    try:
-        os.chdir("INBOX")
-    except FileNotFoundError:
-        os.mkdir("INBOX")
-        os.chdir("INBOX")
-
     with IMAPClient(host) as server:
-        server.login(username, password)
+        server.login(login, password)
         server.select_folder("INBOX", readonly=read_only)
 
         mails = server.search(msg_type)
         for uid, message_data in server.fetch(mails, "RFC822").items():
             if uid <= last_uid:
                 continue
-            mail = mailparser.parse_from_bytes(message_data[b"RFC822"])
-
-            subject = mail.subject
-            from_ = " ".join(mail.from_[0])
-
-            dir_name = "{} от {}".format(subject, from_)
-
-            os.mkdir(dir_name)
-            os.chdir(dir_name)
-
-            if mail.text_plain:
-                text_plain = "\n".join(mail.text_plain)
-                with open("text_plain.txt", "w") as f:
-                    f.write("{}\n\n{}".format(dir_name, text_plain))
-
-            if mail.text_html:
-                text_html = "\n".join(mail.text_html)
-                with open("text_html.html", "w") as f:
-                    f.write(text_html)
-
-            if mail.attachments:
-                mail.write_attachments("attachments")
-
-            os.chdir("../")
-
-    os.chdir("../")
-    return mails[-1] if mails else last_uid
+            try:
+                mail = mailparser.parse_from_bytes(message_data[b"RFC822"])
+            except TypeError:  # TODO Некоторые письма вызывают эту ошибку при парсинге библиотекой mailparser
+                pass
+            else:
+                yield mail, uid
 
 
-def send_emails_telegram(bot: TeleBot, chat_id: str):
-    os.chdir("INBOX")  # Переход в папку с сохраненными письмами
-    for mail in os.listdir("."):  # Получаем список папок, в которых лежит само письмо и его вложения
-        os.chdir(mail)  # Переходим в папку с письмом
+def send_email_telegram(bot: TeleBot, chat_id: str, mail: mailparser.MailParser):
+    subject = mail.subject
+    from_ = " ".join(mail.from_[0])
+    mail_name = "{} от {}".format(subject, from_)
 
-        if os.path.exists("text_plain.txt"):  # Если существует текстовая версия письма
-            with open("text_plain.txt") as f:
-                message = split(f.read())
-            bot.send_message(chat_id, message[0])  # Отправляем ее первые 4092 символа
-            if len(message) >= 2:  # И высылаем файл письма целиком (если письмо содержит более 4092 символов)
-                bot.send_document(chat_id, open("text_plain.txt", "rb"), caption="Продолжение письма")
-            os.remove("text_plain.txt")  # Удаляем отправленный файл
+    if mail.text_plain:  # Если существует текстовая версия письма
+        message = "\n".join(mail.text_plain)
+        bot.send_message(
+            chat_id, split(message)[0]
+        )  # Отправляем ее первые 4092 символа
+        # И высылаем файл письма целиком (если письмо содержит более 4092 символов)
+        if len(message) >= 2:
+            f = io.BytesIO("{}\n\n{}".format(mail_name, message).encode())
+            f.name = mail_name + ".txt"
+            bot.send_document(chat_id, f, caption="Полный текст письма")
 
-        if os.path.exists("text_html.html"):  # Если существует веб версия письма, то отправляем ее файлом
-            bot.send_document(chat_id, open("text_html.html", "rb"), caption="{} (веб версия письма)".format(mail))
-            os.remove("text_html.html")  # Удаляем отправленный файл
+    if mail.text_html:  # Если существует веб версия письма, то отправляем ее файлом
+        text_html = "\n".join(mail.text_html)
+        f = io.BytesIO(text_html.encode())
+        f.name = mail_name + ".html"
+        bot.send_document(
+            chat_id,
+            f,
+            caption="{} (веб версия письма)".format("{} от {}".format(subject, from_)),
+        )
 
-        if os.path.exists("attachments"):  # Если есть вложения в письме, то отправляем и их.
-            for file in os.listdir("attachments"):
-                bot.send_document(chat_id, open(file, "rb"))
-                os.remove(file)  # Удаляем отправленный файл
-            os.rmdir("attachments")  # Удаляем пустую папку
-
-        os.chdir("../")  # Выходим из папки с письмом
-        os.rmdir(mail)  # И удаляем ее, так как она пуста
-    os.chdir("../")  # Выходим из папки с сохраненными письмами
+    if mail.attachments:  # Если есть вложения в письме, то отправляем и их.
+        with tempfile.TemporaryDirectory() as tmp_dir:  # Создание временной директории для хранения вложений
+            mail.write_attachments(tmp_dir)  # Сохраняем вложения
+            for file in os.listdir(tmp_dir):
+                bot.send_document(
+                    chat_id, open(os.path.join(tmp_dir, file), "rb")
+                )  # Отправляем вложения
 
 
 def split(text: str, max_message_length: int = 4091) -> list:
@@ -104,7 +93,12 @@ def split(text: str, max_message_length: int = 4091) -> list:
     :param max_message_length: Максимальная длина разбитой части текста
     """
     if len(text) >= max_message_length:
-        last_index = max(map(lambda separator: text.rfind(separator, 0, max_message_length), message_breakers))
+        last_index = max(
+            map(
+                lambda separator: text.rfind(separator, 0, max_message_length),
+                message_breakers,
+            )
+        )
         good_part = text[:last_index]
         bad_part = text[last_index + 1:]
         return [good_part] + split(bad_part, max_message_length)
@@ -116,16 +110,21 @@ if __name__ == "__main__":
     # Инициализация и чтение конфигурации из файла config.ini
     config = configparser.ConfigParser()
     config.read("config.ini")
-    host = config.get("email", "host")
-    login = config.get("email", "login")
-    password = config.get("email", "password")
-    last_uid = config.getint("email", "last_uid")
+    imap_host = config.get("email", "host")
+    username = config.get("email", "login")
+    pass_ = config.get("email", "password")
+    last_id = config.getint("email", "last_uid", fallback=0)
+    read_only = config.getboolean("email", "read_only", fallback=False)
+    mail_type = config.get("email", "criteria", fallback="UNSEEN")
     bot_token = config.get("telegram", "token")
     chat = config.get("telegram", "chat_id")
-    bot = TeleBot(bot_token)
+    bot_ = TeleBot(bot_token)
     # Получение непрочитанных писем
-    last_uid = get_emails(host, login, password, last_uid=last_uid)
-    config.set("email", "last_uid", str(last_uid))
-    config.write(open("config.ini", "w"))
-    # Отправка писем в Telegram
-    send_emails_telegram(bot, chat)
+    for email, mail_id in get_emails(
+        imap_host, username, pass_, mail_type, last_id, read_only
+    ):
+        # Отправка письма в Telegram
+        send_email_telegram(bot_, chat, email)
+        config.set("email", "last_uid", str(mail_id))
+        config.write(open("config.ini", "w"))
+        time.sleep(5)
